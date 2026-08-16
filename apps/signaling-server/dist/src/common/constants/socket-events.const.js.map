@@ -1,0 +1,1 @@
+{"version":3,"file":"socket-events.const.js","sourceRoot":"","sources":["../../../../src/common/constants/socket-events.const.ts"],"names":[],"mappings":";;;AAAa,QAAA,aAAa,GAAG;IACxB,WAAW,EAAE,aAAa;IACzB,YAAY,EAAE,cAAc;IAC3B,SAAS,EAAE,WAAW;IACrB,WAAW,EAAE,aAAa;IAC1B,SAAS,EAAE,WAAW;IACrB,UAAU,EAAE,YAAY;IACxB,aAAa,EAAE,eAAe;IAC7B,UAAU,EAAE,YAAY;IACvB,WAAW,EAAE,aAAa;CAAY,CAAC"}
