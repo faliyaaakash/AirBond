@@ -18,6 +18,7 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "autoprefixer": "^10.5.4",
     "concurrently": "^9.0.0",
     "eslint": "^9.9.0",
