@@ -1,0 +1,46 @@
+{
+  "name": "airbond",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "version": "1.0.0",
+  "description": "An account-free P2P file &amp; folder sharing platform with low-latency group video calling powered by WebRTC, Web Workers, and an SFU architecture.",
+  "main": "index.js",
+  "scripts": {
+    "dev:server": "npm run start:dev -w apps/signaling-server",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:infra": "docker compose -f infra/docker-compose.yml up -d",
+    "dev": "npm run dev:infra && concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "build": "npm run build --workspaces --ifpresent",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.5.4",
+    "concurrently": "^9.0.0",
+    "eslint": "^9.9.0",
+    "postcss": "^8.5.26",
+    "prettier": "^3.3.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.5.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/faliyaaakash/AirBond.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/faliyaaakash/AirBond/issues"
+  },
+  "homepage": "https://github.com/faliyaaakash/AirBond#readme",
+  "dependencies": {
+    "qrcode.react": "^4.2.0",
+    "socket.io-client": "^4.8.3",
+    "zustand": "^5.0.15"
+  }
+}

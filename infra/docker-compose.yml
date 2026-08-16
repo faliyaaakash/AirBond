@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1
+
+  # coturn:
+  #   image: coturn/coturn:latest
+  #   ports:
+  #     - '3478:3478/udp'
+  #     - '3478:3478/tcp'
+  #   volumes:
+  #     - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf
+  #   command: -c /etc/coturn/turnserver.conf
+
+volumes:
+  redis_data:
