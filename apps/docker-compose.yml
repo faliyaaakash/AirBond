@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  # Redis for Socket.IO Adapter & Room State Management
+  redis:
+    image: redis:7-alpine
+    container_name: airbond-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+volumes:
+  redis_data:
+    driver: local

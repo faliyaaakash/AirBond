@@ -12,4 +12,3 @@ exports.SOCKET_EVENTS = {
     LEAVE_ROOM: 'leave-room',
     ROOM_CLOSED: 'room-closed',
 };
-//# sourceMappingURL=socket-events.const.js.map
