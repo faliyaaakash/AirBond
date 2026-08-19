@@ -39,7 +39,10 @@
   },
   "homepage": "https://github.com/faliyaaakash/AirBond#readme",
   "dependencies": {
+    "@nestjs/platform-socket.io": "^11.2.1",
+    "@nestjs/websockets": "^11.2.1",
     "qrcode.react": "^4.2.0",
+    "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "zustand": "^5.0.15"
   }
