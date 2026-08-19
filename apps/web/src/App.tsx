@@ -22,8 +22,9 @@ export default function FileRoom() {
       setStatus(`Broadcasting ${file.name} to ${connectedPeers.length} peers...`);
       await broadcastFile(file);
       setStatus(`Sent ${file.name} successfully!`);
-    } catch (err: any) {
-      setStatus(`Failed: ${err.message}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStatus(`Failed: ${message}`);
     }
   };
 

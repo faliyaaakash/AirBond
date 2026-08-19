@@ -20,13 +20,15 @@ import { randomUUID } from 'crypto';
   },
   transports: ['websocket', 'polling'],
 })
-export class FileGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+export class FileGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server!: Server;
-  
+
   constructor(private readonly redisService: RedisService) {}
 
-  afterInit(server: Server) {
+  afterInit() {
     console.log(' FileGateway WebSocket Server active on port 4000');
   }
 
@@ -38,18 +40,20 @@ export class FileGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     console.log(`[Socket Disconnected]: ${client.id}`);
     const { roomId } = await this.redisService.removePeer(client.id);
     if (roomId) {
-      this.server.to(roomId).emit(SOCKET_EVENTS.LEAVE_ROOM, { peerId: client.id });
+      this.server
+        .to(roomId)
+        .emit(SOCKET_EVENTS.LEAVE_ROOM, { peerId: client.id });
     }
   }
 
   @SubscribeMessage(SOCKET_EVENTS.CREATE_ROOM)
   async handleCreateRoom(@ConnectedSocket() client: Socket) {
     const roomId = randomUUID().slice(0, 8);
-    
+
     // Socket joins room
     await client.join(roomId);
-    await this.redisService.addPeerToRoom(roomId, client.id);  // Add Host socket ID to Redis room set
-    client.emit(SOCKET_EVENTS.ROOM_CREATED, { roomId });   // Emit room created to host
+    await this.redisService.addPeerToRoom(roomId, client.id); // Add Host socket ID to Redis room set
+    client.emit(SOCKET_EVENTS.ROOM_CREATED, { roomId }); // Emit room created to host
     console.log(`[Room Created]: ${roomId} by Host ${client.id}`);
   }
 
@@ -64,21 +68,30 @@ export class FileGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     await client.join(cleanRoomId);
 
     // Add Joiner to Redis and get all OTHER existing peers (the Host)
-    const existingPeers = await this.redisService.addPeerToRoom(cleanRoomId, client.id);
-    
-    console.log(`Peer ${client.id} joined room ${cleanRoomId}. Existing peers found in Redis:`, existingPeers);
+    const existingPeers = await this.redisService.addPeerToRoom(
+      cleanRoomId,
+      client.id,
+    );
+
+    console.log(
+      `Peer ${client.id} joined room ${cleanRoomId}. Existing peers found in Redis:`,
+      existingPeers,
+    );
 
     // Send the existing peers list to the new joiner
     client.emit('room-users', { peers: existingPeers });
 
     //Notify the host (and any other peers) that a new peer joined
-    client.to(cleanRoomId).emit(SOCKET_EVENTS.PEER_JOINED, { peerId: client.id });
+    client
+      .to(cleanRoomId)
+      .emit(SOCKET_EVENTS.PEER_JOINED, { peerId: client.id });
   }
 
   @SubscribeMessage(SOCKET_EVENTS.SDP_OFFER)
   handleSdpOffer(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { targetPeerId: string; sdp: RTCSessionDescriptionInit },
+    @MessageBody()
+    data: { targetPeerId: string; sdp: RTCSessionDescriptionInit },
   ) {
     this.server.to(data.targetPeerId).emit(SOCKET_EVENTS.SDP_OFFER, {
       senderPeerId: client.id,
@@ -89,7 +102,8 @@ export class FileGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   @SubscribeMessage(SOCKET_EVENTS.SDP_ANSWER)
   handleSdpAnswer(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { targetPeerId: string; sdp: RTCSessionDescriptionInit },
+    @MessageBody()
+    data: { targetPeerId: string; sdp: RTCSessionDescriptionInit },
   ) {
     this.server.to(data.targetPeerId).emit(SOCKET_EVENTS.SDP_ANSWER, {
       senderPeerId: client.id,
@@ -100,7 +114,8 @@ export class FileGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   @SubscribeMessage(SOCKET_EVENTS.ICE_CANDIDATE)
   handleIceCandidate(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { targetPeerId: string; candidate: RTCIceCandidateInit },
+    @MessageBody()
+    data: { targetPeerId: string; candidate: RTCIceCandidateInit },
   ) {
     this.server.to(data.targetPeerId).emit(SOCKET_EVENTS.ICE_CANDIDATE, {
       senderPeerId: client.id,

@@ -26,22 +26,29 @@ export class RedisService implements OnModuleDestroy {
   }
 
   // Add peer socket ID to the room's Redis Set
- async addPeerToRoom(roomId: string, socketId: string): Promise<string[]> {
+  async addPeerToRoom(roomId: string, socketId: string): Promise<string[]> {
     const key = `room:${roomId}:peers`;
-    
+
     // Fetch peers BEFORE adding new peer, OR filter after
     const allPeers = await this.client.smembers(key);
     const existingPeers = allPeers.filter((id) => id !== socketId);
 
     await this.client.sadd(key, socketId);
     await this.client.expire(key, this.ROOM_TTL);
-    await this.client.set(`socket:${socketId}:room`, roomId, 'EX', this.ROOM_TTL);
+    await this.client.set(
+      `socket:${socketId}:room`,
+      roomId,
+      'EX',
+      this.ROOM_TTL,
+    );
 
     return existingPeers;
   }
 
   // Remove peer on disconnect and clean up empty rooms
-  async removePeer(socketId: string): Promise<{ roomId: string | null; remainingPeers: string[] }> {
+  async removePeer(
+    socketId: string,
+  ): Promise<{ roomId: string | null; remainingPeers: string[] }> {
     const roomId = await this.client.get(`socket:${socketId}:room`);
     if (!roomId) return { roomId: null, remainingPeers: [] };
 

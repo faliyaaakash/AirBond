@@ -41,12 +41,118 @@ export function usePeerConnection() {
     setConnectedPeers([...activeIds]);
   }, []);
 
-  
+
+
+  function createPeerConnection(peerId: string): RTCPeerConnection {
+    if (peersRef.current.has(peerId)) {
+      peersRef.current.get(peerId)?.close();
+    }
+
+    const pc = new RTCPeerConnection(ICE_CONFIG);
+    peersRef.current.set(peerId, pc);
+    candidateQueues.current.set(peerId, []);
+    remoteDescriptionSet.current.set(peerId, false);
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current) {
+        socketRef.current.emit(SOCKET_EVENTS.ICE_CANDIDATE, {
+          targetPeerId: peerId,
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log(`Peer [${peerId}] State:`, pc.connectionState);
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        closePeer(peerId);
+      }
+    };
+
+    return pc;
+  }
+
+  function bindDataChannel(dc: RTCDataChannel, peerId: string) {
+    dc.binaryType = 'arraybuffer';
+
+    dc.onopen = () => {
+      console.log(`DataChannel OPEN with peer: ${peerId}`);
+      updateConnectedPeerList();
+    };
+
+    dc.onclose = () => {
+      console.log(`DataChannel CLOSED with peer: ${peerId}`);
+      dataChannelsRef.current.delete(peerId);
+      updateConnectedPeerList();
+    };
+
+    dc.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'HEADER') {
+            fileMetadataRef.current = { name: msg.name, size: msg.size };
+            receivedChunksRef.current = [];
+            setReceivedBytes(0);
+          }
+          if (msg.type === 'EOF') {
+            const meta = fileMetadataRef.current;
+            if (meta) {
+              const blob = new Blob(receivedChunksRef.current.map(chunk => {
+                    const buffer = new ArrayBuffer(chunk.byteLength);
+                    new Uint8Array(buffer).set(chunk);
+                    return buffer;
+                  })
+              );
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = meta.name;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(url);
+            }
+            receivedChunksRef.current = [];
+          }
+        } catch (e) {
+          console.error('DataChannel JSON parse error:', e);
+        }
+      } else {
+        const chunk = new Uint8Array(event.data as ArrayBuffer);
+        receivedChunksRef.current.push(chunk);
+        setReceivedBytes((prev) => prev + chunk.byteLength);
+      }
+    };
+  }
+
+  async function drainCandidateQueue(peerId: string, pc: RTCPeerConnection) {
+    const queue = candidateQueues.current.get(peerId) || [];
+    while (queue.length > 0) {
+      const cand = queue.shift();
+      if (cand) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (err) {
+          console.warn(`Error draining candidate for ${peerId}:`, err);
+        }
+      }
+    }
+  }
+
+  function closePeer(peerId: string) {
+    peersRef.current.get(peerId)?.close();
+    peersRef.current.delete(peerId);
+    dataChannelsRef.current.delete(peerId);
+    candidateQueues.current.delete(peerId);
+    remoteDescriptionSet.current.delete(peerId);
+    updateConnectedPeerList();
+  }
 
   useEffect(() => {
-     
+
     //creates the Socket.IO client
-    const socket = io('http://localhost:4000', {
+    const socket = io(import.meta.env.VITE_SIGNALING_URL || 'http://localhost:4000', {
       transports: ['websocket'],
     });
 
@@ -183,113 +289,6 @@ export function usePeerConnection() {
     };
   },[updateConnectedPeerList])
 
-
-  function createPeerConnection(peerId: string): RTCPeerConnection {
-    if (peersRef.current.has(peerId)) {
-      peersRef.current.get(peerId)?.close();
-    }
-
-    const pc = new RTCPeerConnection(ICE_CONFIG);
-    peersRef.current.set(peerId, pc);
-    candidateQueues.current.set(peerId, []);
-    remoteDescriptionSet.current.set(peerId, false);
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socketRef.current) {
-        socketRef.current.emit(SOCKET_EVENTS.ICE_CANDIDATE, {
-          targetPeerId: peerId,
-          candidate: event.candidate,
-        });
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      console.log(`Peer [${peerId}] State:`, pc.connectionState);
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-        closePeer(peerId);
-      }
-    };
-
-    return pc;
-  }
-
-  function bindDataChannel(dc: RTCDataChannel, peerId: string) {
-    dc.binaryType = 'arraybuffer';
-
-    dc.onopen = () => {
-      console.log(`DataChannel OPEN with peer: ${peerId}`);
-      updateConnectedPeerList();
-    };
-
-    dc.onclose = () => {
-      console.log(`DataChannel CLOSED with peer: ${peerId}`);
-      dataChannelsRef.current.delete(peerId);
-      updateConnectedPeerList();
-    };
-
-    dc.onmessage = (event) => {
-      if (typeof event.data === 'string') {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'HEADER') {
-            fileMetadataRef.current = { name: msg.name, size: msg.size };
-            receivedChunksRef.current = [];
-            setReceivedBytes(0);
-          }
-          if (msg.type === 'EOF') {
-            const meta = fileMetadataRef.current;
-            if (meta) {
-              const blob = new Blob(receivedChunksRef.current.map(chunk => {
-                    const buffer = new ArrayBuffer(chunk.byteLength);
-                    new Uint8Array(buffer).set(chunk);
-                    return buffer;
-                  })
-              );
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = meta.name;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              URL.revokeObjectURL(url);
-            }
-            receivedChunksRef.current = [];
-          }
-        } catch (e) {
-          console.error('DataChannel JSON parse error:', e);
-        }
-      } else {
-        const chunk = new Uint8Array(event.data as ArrayBuffer);
-        receivedChunksRef.current.push(chunk);
-        setReceivedBytes((prev) => prev + chunk.byteLength);
-      }
-    };
-  }
-
-  async function drainCandidateQueue(peerId: string, pc: RTCPeerConnection) {
-    const queue = candidateQueues.current.get(peerId) || [];
-    while (queue.length > 0) {
-      const cand = queue.shift();
-      if (cand) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(cand));
-        } catch (err) {
-          console.warn(`Error draining candidate for ${peerId}:`, err);
-        }
-      }
-    }
-  }
-
-  function closePeer(peerId: string) {
-    peersRef.current.get(peerId)?.close();
-    peersRef.current.delete(peerId);
-    dataChannelsRef.current.delete(peerId);
-    candidateQueues.current.delete(peerId);
-    remoteDescriptionSet.current.delete(peerId);
-    updateConnectedPeerList();
-  }
-
   const createRoom = () => socketRef.current?.emit(SOCKET_EVENTS.CREATE_ROOM);
 
   const joinRoom = (targetRoomId: string) => {
@@ -345,273 +344,3 @@ export function usePeerConnection() {
     receivedBytes,
   };
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// import { useEffect, useRef, useState } from 'react';
-// import { io, Socket } from 'socket.io-client';
-// import { SOCKET_EVENTS } from '@airbond/shared';
-
-
-// //STUN SERVER: to get ICE(interactive connectivity establishment) candidates 
-// const ICE_SERVERS: RTCConfiguration = {
-//   iceServers: [
-//     { urls: 'stun:stun.l.google.com:19302' },
-//     { urls: 'stun:stun1.l.google.com:19302' },
-//   ],
-// };
-
-// export function usePeerConnection() {
-//   const socketRef = useRef<Socket | null>(null);  //store SOCKET IO instance (ICE candidates)
-//   const pcRef = useRef<RTCPeerConnection | null>(null);  // Manages the entire WebRTC peer lifecycle
-//   const dataChannelRef = useRef<RTCDataChannel | null>(null); //Handles direct peer-to-peer data transfer(e.g., text chat, binary file chunks, arbitrary messages)
-//   const roomIdRef = useRef<string>(''); //The current Room ID / Session identifier string.
-
-//   const receivedChunksRef = useRef<Uint8Array[]>([]); 
-//   const fileMetadataRef = useRef<{ name: string; size: number } | null>(null);
-
-//   const [roomId, setRoomId] = useState<string>('');                    //store connected room ID 
-//   const [isConnected, setIsConnected] = useState<boolean>(false);
-//   const [isSocketConnected, setIsSocketConnected] = useState<boolean>(false);
-//   const [receivedBytes, setReceivedBytes] = useState<number>(0);
-
-
-//   //syncing roomId state into roomIdRef reference
-//   useEffect(() => {
-//     roomIdRef.current = roomId;
-//   }, [roomId]);
-
-
-//   useEffect(() => {
-//     const socket = io('http://localhost:4000', {
-//       transports: ['polling', 'websocket'], // fallback polling first if ws is blocked
-//       autoConnect: true,
-//       reconnection: true,
-//       reconnectionAttempts: 10,
-//       reconnectionDelay: 1000,
-//     });
-//     socketRef.current = socket;
-
-//     socket.on('connect', () => {
-//       console.log('Connected to signaling server! Socket ID:', socket.id);
-//       setIsSocketConnected(true);
-//     });
-
-//     socket.on('connect_error', (err) => {
-//       console.error(' Connection error to signaling server:', err.message);
-//       setIsSocketConnected(false);
-//     });
-
-//     socket.on(SOCKET_EVENTS.ROOM_CREATED, (data: { roomId: string }) => {
-//       console.log('Room created:', data.roomId);
-//       setRoomId(data.roomId);
-//     });
-
-//     // 1. Host side: Peer joined the room -> create WebRTC offer & data channel
-//     socket.on(SOCKET_EVENTS.PEER_JOINED, async (data: { peerId: string }) => {
-//       console.log(' Peer joined:', data.peerId, '-> Creating Offer...');
-//       const pc = createPeerConnection();
-
-//       const dc = pc.createDataChannel('fileTransfer', { ordered: true });
-//       dataChannelRef.current = dc;
-//       bindDataChannel(dc);
-
-//       const offer = await pc.createOffer();
-//       await pc.setLocalDescription(offer);
-
-//       socket.emit(SOCKET_EVENTS.SDP_OFFER, {
-//         roomId: roomIdRef.current,
-//         sdp: offer,
-//       });
-//     });
-
-//     // 2. Joiner side: Received offer -> create WebRTC answer & listen for data channel
-//     socket.on(SOCKET_EVENTS.SDP_OFFER, async (data: { sdp: RTCSessionDescriptionInit }) => {
-//       console.log(' Received SDP Offer -> Creating Answer...');
-//       const pc = createPeerConnection();
-
-//       pc.ondatachannel = (event) => {
-//         console.log(' Joiner received remote DataChannel!');
-//         dataChannelRef.current = event.channel;
-//         bindDataChannel(event.channel);
-//       };
-
-//       await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-//       const answer = await pc.createAnswer();
-//       await pc.setLocalDescription(answer);
-
-//       socket.emit(SOCKET_EVENTS.SDP_ANSWER, {
-//         roomId: roomIdRef.current,
-//         sdp: answer,
-//       });
-//     });
-
-//     // 3. Host side: Received answer
-//     socket.on(SOCKET_EVENTS.SDP_ANSWER, async (data: { sdp: RTCSessionDescriptionInit }) => {
-//       console.log(' Received SDP Answer -> Finalizing connection...');
-//       if (pcRef.current) {
-//         await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.sdp));
-//       }
-//     });
-
-//     // 4. ICE candidate exchange
-//     socket.on(SOCKET_EVENTS.ICE_CANDIDATE, async (data: { candidate: RTCIceCandidateInit }) => {
-//       if (data.candidate && pcRef.current) {
-//         try {
-//           await pcRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-//         } catch (e) {
-//           console.warn('Error adding ICE candidate:', e);
-//         }
-//       }
-//     });
-
-//     return () => {
-//       socket.disconnect();
-//       pcRef.current?.close();
-//     };
-//   }, []);
-
-//   function createPeerConnection(): RTCPeerConnection {
-//     if (pcRef.current) {
-//       pcRef.current.close();
-//     }
-
-//     const pc = new RTCPeerConnection(ICE_SERVERS);
-//     pcRef.current = pc;
-
-//     pc.onicecandidate = (event) => {
-//       if (event.candidate && socketRef.current) {
-//         socketRef.current.emit(SOCKET_EVENTS.ICE_CANDIDATE, {
-//           roomId: roomIdRef.current,
-//           candidate: event.candidate,
-//         });
-//       }
-//     };
-
-//     pc.onconnectionstatechange = () => {
-//       console.log('WebRTC Connection State:', pc.connectionState);
-//       if (pc.connectionState === 'connected') {
-//         setIsConnected(true);
-//       } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-//         setIsConnected(false);
-//       }
-//     };
-
-//     return pc;
-//   }
-
-//   function bindDataChannel(dc: RTCDataChannel) {
-//     dc.binaryType = 'arraybuffer';
-
-//     dc.onopen = () => {
-//       console.log('DataChannel OPEN! P2P connection fully verified!');
-//       setIsConnected(true); // <-- Direct trigger updates UI immediately
-//     };
-
-//     dc.onclose = () => {
-//       console.log('DataChannel CLOSED');
-//       setIsConnected(false);
-//     };
-
-//     dc.onmessage = (event) => {
-//       if (typeof event.data === 'string') {
-//         try {
-//           const msg = JSON.parse(event.data);
-
-//           if (msg.type === 'HEADER') {
-//             console.log(`Receiving file: ${msg.name} (${msg.size} bytes)`);
-//             fileMetadataRef.current = { name: msg.name, size: msg.size };
-//             receivedChunksRef.current = [];
-//             setReceivedBytes(0);
-//           }
-
-//           if (msg.type === 'EOF') {
-//             console.log('Transfer complete. Triggering download...');
-//             const meta = fileMetadataRef.current;
-//             if (meta) {
-//               const blob = new Blob(receivedChunksRef.current as BlobPart[]);
-//               const url = URL.createObjectURL(blob);
-
-//               const a = document.createElement('a');
-//               a.href = url;
-//               a.download = meta.name;
-//               document.body.appendChild(a);
-//               a.click();
-//               a.remove();
-//               URL.revokeObjectURL(url);
-//               console.log(`Saved ${meta.name} successfully!`);
-//             }
-//             receivedChunksRef.current = [];
-//           }
-//         } catch (err) {
-//           console.error('Error parsing control message:', err);
-//         }
-//       } else {
-//         const chunk = new Uint8Array(event.data as ArrayBuffer);
-//         receivedChunksRef.current.push(chunk);
-//         setReceivedBytes((prev) => prev + chunk.byteLength);
-//       }
-//     };
-//   }
-
-//   const createRoom = () => {
-//     if (!socketRef.current?.connected) {
-//       alert('Signaling server is not connected!');
-//       return;
-//     }
-//     socketRef.current.emit(SOCKET_EVENTS.CREATE_ROOM);
-//   };
-
-//   const joinRoom = (targetRoomId: string) => {
-//     if (!socketRef.current?.connected) {
-//       alert('Signaling server is not connected!');
-//       return;
-//     }
-//     const cleanId = targetRoomId.trim();
-//     setRoomId(cleanId);
-//     roomIdRef.current = cleanId;
-//     socketRef.current.emit(SOCKET_EVENTS.JOIN_ROOM, { roomId: cleanId });
-//   };
-
-//   return {
-//     roomId,
-//     isConnected,
-//     isSocketConnected,
-//     createRoom,
-//     joinRoom,
-//     dataChannelRef,
-//     receivedBytes,
-//   };
-// }

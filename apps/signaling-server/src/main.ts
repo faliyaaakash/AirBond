@@ -8,7 +8,7 @@ async function bootstrap() {
     origin: '*',
   });
   app.useWebSocketAdapter(new IoAdapter(app));
-  await app.listen(4000,'0.0.0.0');
+  await app.listen(4000, '0.0.0.0');
   console.log('HTTP & Signaling Server running on http://localhost:4000');
 }
-bootstrap();
+void bootstrap();

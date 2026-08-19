@@ -1,1 +1,7 @@
 node_modules
+dist
+dist-ssr
+coverage
+*.tsbuildinfo
+.env
+*.local
