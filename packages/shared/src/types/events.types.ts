@@ -27,3 +27,23 @@ export interface IceCandidatePayload {
 export interface RoomUsersPayload {
   peers: string[];
 }
+
+// Lightweight metadata-only progress ping sent alongside a P2P file transfer.
+// Never carries file content - just enough for the live stats dashboard to show
+// what's happening (filename, size, bytes so far) without the server ever
+// touching the actual bytes, which still travel peer-to-peer over WebRTC.
+export interface FileTransferProgressPayload {
+  roomId: string;
+  direction: 'send' | 'receive';
+  fileName: string;
+  fileSize: number;
+  bytesTransferred: number;
+}
+
+// Reported once a peer connection settles, classifying how it connected -
+// never anything about the connection's content. Lets the dashboard show
+// whether a transfer actually went direct peer-to-peer or needed a TURN relay.
+export interface ConnectionInfoPayload {
+  roomId: string;
+  connectionType: 'direct' | 'relay' | 'unknown';
+}

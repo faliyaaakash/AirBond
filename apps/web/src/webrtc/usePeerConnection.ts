@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_EVENTS } from '@airbond/shared';
+import type { FileTransferProgressPayload } from '@airbond/shared';
 import { ICE_CONFIG } from './iceConfig';
+import { classifyConnectionType } from './connectionType';
 
 interface TransferSample {
   time: number;
@@ -116,6 +118,21 @@ export function usePeerConnection() {
     dc.onopen = () => {
       console.log(`DataChannel OPEN with peer: ${peerId}`);
       updateConnectedPeerList();
+
+      // Metadata-only: classify how this connection actually got established
+      // (direct P2P vs relayed through TURN) for the live stats dashboard.
+      // The server has no visibility into this on its own - it only sees
+      // whatever we report here.
+      const pc = peersRef.current.get(peerId);
+      if (pc) {
+        void classifyConnectionType(pc).then((connectionType) => {
+          if (!socketRef.current || !roomIdRef.current) return;
+          socketRef.current.emit(SOCKET_EVENTS.CONNECTION_INFO, {
+            roomId: roomIdRef.current,
+            connectionType,
+          });
+        });
+      }
     };
 
     dc.onclose = () => {
@@ -179,6 +196,14 @@ export function usePeerConnection() {
           lastReceiveUiUpdateRef.current = now;
           setReceivedBytes(receivedTotalRef.current);
           setReceiveSpeedBps(computeSpeedBps(samples));
+          if (fileMetadataRef.current) {
+            reportTransferProgress(
+              'receive',
+              fileMetadataRef.current.name,
+              fileMetadataRef.current.size,
+              receivedTotalRef.current,
+            );
+          }
         }
       }
     };
@@ -196,6 +221,25 @@ export function usePeerConnection() {
         }
       }
     }
+  }
+
+  // Lightweight metadata-only ping for the live stats dashboard - filename,
+  // size, and bytes-so-far, never the file itself (which stays on the P2P
+  // data channel this function has no access to).
+  function reportTransferProgress(
+    direction: FileTransferProgressPayload['direction'],
+    fileName: string,
+    fileSize: number,
+    bytesTransferred: number,
+  ) {
+    if (!socketRef.current || !roomIdRef.current) return;
+    socketRef.current.emit(SOCKET_EVENTS.FILE_TRANSFER_PROGRESS, {
+      roomId: roomIdRef.current,
+      direction,
+      fileName,
+      fileSize,
+      bytesTransferred,
+    });
   }
 
   function closePeer(peerId: string) {
@@ -401,6 +445,7 @@ export function usePeerConnection() {
         lastSendUiUpdateRef.current = now;
         setSendProgress(offset / file.size);
         setSendSpeedBps(computeSpeedBps(samples));
+        reportTransferProgress('send', file.name, file.size, offset);
       }
     }
 

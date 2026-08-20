@@ -28,6 +28,7 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { RoomIdDto } from './dto/room-id.dto';
 import { ReactMessageDto } from './dto/react-message.dto';
 import { validateDto } from './validate-dto';
+import { StatsService } from '../../stats/stats.service';
 
 const MESSAGE_MAX_LENGTH = 2000;
 const RATE_LIMIT_WINDOW_MS = 5000;
@@ -56,7 +57,10 @@ export class ChatGateway implements OnGatewayDisconnect {
   private readonly participants = new Map<string, Map<string, string>>();
   private readonly rateLimits = new Map<string, RateLimitState>();
 
-  constructor(private readonly chatRoomService: ChatRoomService) {}
+  constructor(
+    private readonly chatRoomService: ChatRoomService,
+    private readonly statsService: StatsService,
+  ) {}
 
   handleDisconnect(client: Socket) {
     this.rateLimits.delete(client.id);
@@ -142,6 +146,14 @@ export class ChatGateway implements OnGatewayDisconnect {
     };
     client.emit(CHAT_EVENTS.JOIN_SUCCESS, successPayload);
 
+    this.statsService.upsertChatRoom(
+      roomId,
+      room.roomName,
+      room.isPrivate,
+      members.size,
+      new Date(successPayload.expiresAt),
+    );
+
     const joinedPayload: ChatUserJoinedPayload = {
       stageName,
       participantCount: members.size,
@@ -178,6 +190,14 @@ export class ChatGateway implements OnGatewayDisconnect {
     if (!stageName) return;
 
     const text = value.text.trim();
+    // Logged for the live wire-proof dashboard: the message's byte size only,
+    // never its content - the whole point being this is relayed and counted,
+    // not stored.
+    void this.statsService.recordSignalingMessage(
+      CHAT_EVENTS.SEND_MESSAGE,
+      Buffer.byteLength(text, 'utf8'),
+      roomId,
+    );
     if (!text) {
       return this.emitChatError(
         client,
@@ -208,6 +228,7 @@ export class ChatGateway implements OnGatewayDisconnect {
       replyTo: value.replyTo,
     };
     this.server.to(roomId).emit(CHAT_EVENTS.NEW_MESSAGE, message);
+    void this.statsService.recordChatMessage(roomId);
   }
 
   @SubscribeMessage(CHAT_EVENTS.REACT_MESSAGE)
@@ -261,6 +282,7 @@ export class ChatGateway implements OnGatewayDisconnect {
     this.server.to(roomId).emit(CHAT_EVENTS.ROOM_CLOSED, payload);
     this.server.in(roomId).socketsLeave(roomId);
     this.participants.delete(roomId);
+    this.statsService.removeChatRoom(roomId);
     this.logger.log(`Chat room ${roomId} force-closed (expired)`);
   }
 
@@ -274,6 +296,7 @@ export class ChatGateway implements OnGatewayDisconnect {
     if (members.size === 0) {
       this.participants.delete(roomId);
     }
+    this.statsService.setChatRoomParticipantCount(roomId, members.size);
 
     const leftPayload: ChatUserLeftPayload = {
       stageName,

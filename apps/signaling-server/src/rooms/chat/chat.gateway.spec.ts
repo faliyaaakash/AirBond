@@ -1,6 +1,7 @@
 import { ChatGateway } from './chat.gateway';
 import { ChatRoomService } from './chat-room.service';
 import { ChatRoomDocument } from './chat-room.schema';
+import { StatsService } from '../../stats/stats.service';
 import { CHAT_EVENTS } from '@airbond/shared';
 
 function makeRoom(overrides: Partial<ChatRoomDocument> = {}): ChatRoomDocument {
@@ -68,7 +69,26 @@ describe('ChatGateway', () => {
           }),
         ),
     };
-    gateway = new ChatGateway(chatRoomService as unknown as ChatRoomService);
+    const statsService: jest.Mocked<
+      Pick<
+        StatsService,
+        | 'upsertChatRoom'
+        | 'setChatRoomParticipantCount'
+        | 'removeChatRoom'
+        | 'recordChatMessage'
+        | 'recordSignalingMessage'
+      >
+    > = {
+      upsertChatRoom: jest.fn(),
+      setChatRoomParticipantCount: jest.fn(),
+      removeChatRoom: jest.fn(),
+      recordChatMessage: jest.fn().mockResolvedValue(undefined),
+      recordSignalingMessage: jest.fn().mockResolvedValue(undefined),
+    };
+    gateway = new ChatGateway(
+      chatRoomService as unknown as ChatRoomService,
+      statsService as unknown as StatsService,
+    );
     server = makeMockServer();
     gateway.server = server.server as never;
   });
@@ -240,6 +260,7 @@ describe('ChatGateway', () => {
         expect.objectContaining({
           stageName: 'Alice',
           text: 'Hello!',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- expect.any() is inherently `any`-typed
           messageId: expect.any(String),
         }),
       );
@@ -247,7 +268,11 @@ describe('ChatGateway', () => {
 
     it('relays a reply-to preview supplied by the client as-is', async () => {
       const socket = await joinRoom('s1', 'Alice');
-      const replyTo = { messageId: 'earlier-id', stageName: 'Bob', snippet: 'original text' };
+      const replyTo = {
+        messageId: 'earlier-id',
+        stageName: 'Bob',
+        snippet: 'original text',
+      };
 
       await gateway.handleSendMessage(socket as never, {
         roomId: 'room1',
@@ -301,7 +326,10 @@ describe('ChatGateway', () => {
     async function joinRoom(id: string, stageName: string) {
       chatRoomService.findRoom.mockResolvedValue(makeRoom());
       const { socket } = makeMockSocket(id);
-      await gateway.handleJoinRoom(socket as never, { roomId: 'room1', stageName });
+      await gateway.handleJoinRoom(socket as never, {
+        roomId: 'room1',
+        stageName,
+      });
       return socket;
     }
 
@@ -327,7 +355,11 @@ describe('ChatGateway', () => {
 
       expect(server.toEmit).toHaveBeenCalledWith(
         CHAT_EVENTS.MESSAGE_REACTED,
-        expect.objectContaining({ messageId: 'msg-1', stageName: 'Alice', reacted: true }),
+        expect.objectContaining({
+          messageId: 'msg-1',
+          stageName: 'Alice',
+          reacted: true,
+        }),
       );
     });
 

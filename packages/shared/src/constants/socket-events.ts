@@ -8,4 +8,6 @@ export const SOCKET_EVENTS = {
   ICE_CANDIDATE: 'ice-candidate',
   LEAVE_ROOM: 'leave-room',
   ROOM_CLOSED: 'room-closed',
+  FILE_TRANSFER_PROGRESS: 'file-transfer-progress',
+  CONNECTION_INFO: 'connection-info',
 } as const;
