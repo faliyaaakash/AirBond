@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import FileSharePage from './webrtc/FileSharePage';
 import ChatPage from './chat/ChatPage';
+import DashboardPage from './dashboard/DashboardPage';
 import { theme } from './theme';
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
@@ -65,6 +66,9 @@ export default function App() {
             <NavLink to="/chat" style={navLinkStyle}>
               Chat
             </NavLink>
+            <NavLink to="/dashboard" style={navLinkStyle}>
+              Dashboard
+            </NavLink>
           </div>
         </nav>
       </div>
@@ -75,6 +79,7 @@ export default function App() {
         <Route path="/files/room/:roomId" element={<FileSharePage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/chat/room/:roomId" element={<ChatPage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
       </Routes>
     </div>
   );
