@@ -1,61 +1,81 @@
-import React, { useState } from 'react';
-import { usePeerConnection } from './webrtc/usePeerConnection';
+import { NavLink, Route, Routes } from 'react-router-dom';
+import HomePage from './pages/HomePage';
+import FileSharePage from './webrtc/FileSharePage';
+import ChatPage from './chat/ChatPage';
+import { theme } from './theme';
 
-export default function FileRoom() {
-  const {
-    roomId,
-    connectedPeers,
-    isSocketConnected,
-    createRoom,
-    joinRoom,
-    broadcastFile,
-    receivedBytes,
-  } = usePeerConnection();
+const navLinkStyle = ({ isActive }: { isActive: boolean }): React.CSSProperties => ({
+  padding: '8px 16px',
+  borderRadius: theme.radius.pill,
+  textDecoration: 'none',
+  color: isActive ? '#fff' : theme.color.textSecondary,
+  background: isActive ? theme.color.accent : 'transparent',
+  fontWeight: 600,
+  fontSize: 14,
+});
 
-  const [joinInput, setJoinInput] = useState('');
-  const [status, setStatus] = useState('Idle');
-
-  const handleSend = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setStatus(`Broadcasting ${file.name} to ${connectedPeers.length} peers...`);
-      await broadcastFile(file);
-      setStatus(`Sent ${file.name} successfully!`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setStatus(`Failed: ${message}`);
-    }
-  };
-
+export default function App() {
   return (
-    <div style={{ maxWidth: 600, margin: '40px auto', padding: 20, fontFamily: 'sans-serif' }}>
-      <h2>AirBond Multi-Peer Mesh (Redis-Backed)</h2>
-      <p>Signaling: <strong style={{ color: isSocketConnected ? 'green' : 'red' }}>{isSocketConnected ? 'Connected' : 'Offline'}</strong></p>
-      <p>Connected Mesh Peers: <strong>{connectedPeers.length}</strong> {connectedPeers.length > 0 && `(${connectedPeers.join(', ')})`}</p>
+    <div style={{ background: theme.color.background, minHeight: '100svh' }}>
+      <div style={{ maxWidth: 1040, margin: '0 auto', padding: '20px 20px 0' }}>
+        <nav
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            flexWrap: 'wrap',
+            background: theme.color.panel,
+            border: `1px solid ${theme.color.border}`,
+            borderRadius: theme.radius.pill,
+            padding: '10px 16px',
+            fontFamily: theme.font.body,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: '50%',
+                background: theme.color.accent,
+                color: '#fff',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontFamily: theme.font.heading,
+                fontWeight: 700,
+                fontSize: 14,
+              }}
+            >
+              A
+            </span>
+            <strong style={{ fontFamily: theme.font.heading, fontSize: 16, color: theme.color.textPrimary }}>
+              AirBond
+            </strong>
+          </div>
 
-      <div>
-        <button onClick={createRoom}>1. Create Room</button>
-        {roomId && <span style={{ marginLeft: 10 }}>Room ID: <strong>{roomId}</strong></span>}
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            <NavLink to="/" end style={navLinkStyle}>
+              Home
+            </NavLink>
+            <NavLink to="/files" style={navLinkStyle}>
+              File Share
+            </NavLink>
+            <NavLink to="/chat" style={navLinkStyle}>
+              Chat
+            </NavLink>
+          </div>
+        </nav>
       </div>
 
-      <div style={{ marginTop: 12 }}>
-        <input placeholder="Room ID" value={joinInput} onChange={(e) => setJoinInput(e.target.value)} />
-        <button onClick={() => joinRoom(joinInput)} style={{ marginLeft: 8 }}>2. Join Room</button>
-      </div>
-
-      <hr style={{ margin: '20px 0' }} />
-
-      <div>
-        <h3>Broadcast File to All Peers</h3>
-        <input type="file" onChange={handleSend} disabled={connectedPeers.length === 0} />
-        <p>Status: <strong>{status}</strong></p>
-      </div>
-
-      <div style={{ marginTop: 16, background: '#f4f4f4', padding: 12 }}>
-        <h4>Incoming Progress</h4>
-        <p>Total Bytes Received: <strong>{receivedBytes}</strong> bytes</p>
-      </div>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/files" element={<FileSharePage />} />
+        <Route path="/files/room/:roomId" element={<FileSharePage />} />
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/chat/room/:roomId" element={<ChatPage />} />
+      </Routes>
     </div>
   );
 }

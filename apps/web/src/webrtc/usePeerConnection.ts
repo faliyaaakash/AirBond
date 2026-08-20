@@ -3,6 +3,34 @@ import { io, Socket } from 'socket.io-client';
 import { SOCKET_EVENTS } from '@airbond/shared';
 import { ICE_CONFIG } from './iceConfig';
 
+interface TransferSample {
+  time: number;
+  bytes: number;
+}
+
+const SPEED_SAMPLE_WINDOW_MS = 2000;
+const UI_UPDATE_THROTTLE_MS = 150;
+
+function computeSpeedBps(samples: TransferSample[]): number {
+  if (samples.length < 2) return 0;
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const elapsedSeconds = (last.time - first.time) / 1000;
+  if (elapsedSeconds <= 0) return 0;
+  return (last.bytes - first.bytes) / elapsedSeconds;
+}
+
+function pruneOldSamples(samples: TransferSample[], now: number) {
+  while (samples.length > 0 && now - samples[0].time > SPEED_SAMPLE_WINDOW_MS) {
+    samples.shift();
+  }
+}
+
+export interface FileTransferMeta {
+  name: string;
+  size: number;
+}
+
 export function usePeerConnection() {
   const socketRef = useRef<Socket | null>(null); //socket referense object to store about socket
   const roomIdRef = useRef<string>('');  // room reference object to store room info : (roomIdRef.current to get value)
@@ -15,13 +43,23 @@ export function usePeerConnection() {
   // Incoming transfer buffers
   const receivedChunksRef = useRef<Uint8Array[]>([]);
   const fileMetadataRef = useRef<{ name: string; size: number } | null>(null);
+  const receivedTotalRef = useRef<number>(0);
+  const receiveSamplesRef = useRef<TransferSample[]>([]);
+  const lastReceiveUiUpdateRef = useRef<number>(0);
+  const sentSamplesRef = useRef<TransferSample[]>([]);
+  const lastSendUiUpdateRef = useRef<number>(0);
 
   // Component state
   const [roomId, setRoomId] = useState<string>('');
   const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
   const [isSocketConnected, setIsSocketConnected] = useState<boolean>(false);
   const [receivedBytes, setReceivedBytes] = useState<number>(0);
-   
+  const [receiveFileMeta, setReceiveFileMeta] = useState<FileTransferMeta | null>(null);
+  const [receiveSpeedBps, setReceiveSpeedBps] = useState<number>(0);
+  const [sendFileMeta, setSendFileMeta] = useState<FileTransferMeta | null>(null);
+  const [sendProgress, setSendProgress] = useState<number>(0);
+  const [sendSpeedBps, setSendSpeedBps] = useState<number>(0);
+
   //ready-state tracking ref
   const remoteDescriptionSet = useRef<Map<string, boolean>>(new Map());
   //sync room id
@@ -93,7 +131,11 @@ export function usePeerConnection() {
           if (msg.type === 'HEADER') {
             fileMetadataRef.current = { name: msg.name, size: msg.size };
             receivedChunksRef.current = [];
+            receivedTotalRef.current = 0;
+            receiveSamplesRef.current = [];
             setReceivedBytes(0);
+            setReceiveFileMeta({ name: msg.name, size: msg.size });
+            setReceiveSpeedBps(0);
           }
           if (msg.type === 'EOF') {
             const meta = fileMetadataRef.current;
@@ -114,6 +156,8 @@ export function usePeerConnection() {
               URL.revokeObjectURL(url);
             }
             receivedChunksRef.current = [];
+            setReceivedBytes(receivedTotalRef.current);
+            setReceiveSpeedBps(0);
           }
         } catch (e) {
           console.error('DataChannel JSON parse error:', e);
@@ -121,7 +165,21 @@ export function usePeerConnection() {
       } else {
         const chunk = new Uint8Array(event.data as ArrayBuffer);
         receivedChunksRef.current.push(chunk);
-        setReceivedBytes((prev) => prev + chunk.byteLength);
+        receivedTotalRef.current += chunk.byteLength;
+
+        const now = Date.now();
+        const samples = receiveSamplesRef.current;
+        samples.push({ time: now, bytes: receivedTotalRef.current });
+        pruneOldSamples(samples, now);
+
+        const isLastChunk = fileMetadataRef.current
+          ? receivedTotalRef.current >= fileMetadataRef.current.size
+          : false;
+        if (isLastChunk || now - lastReceiveUiUpdateRef.current > UI_UPDATE_THROTTLE_MS) {
+          lastReceiveUiUpdateRef.current = now;
+          setReceivedBytes(receivedTotalRef.current);
+          setReceiveSpeedBps(computeSpeedBps(samples));
+        }
       }
     };
   }
@@ -309,6 +367,12 @@ export function usePeerConnection() {
       throw new Error('No peers currently connected to receive file!');
     }
 
+    sentSamplesRef.current = [];
+    lastSendUiUpdateRef.current = 0;
+    setSendFileMeta({ name: file.name, size: file.size });
+    setSendProgress(0);
+    setSendSpeedBps(0);
+
     // 1. Send Header
     const header = JSON.stringify({ type: 'HEADER', name: file.name, size: file.size });
     channels.forEach((dc) => dc.send(header));
@@ -327,11 +391,23 @@ export function usePeerConnection() {
       const buffer = await slice.arrayBuffer();
       channels.forEach((dc) => dc.send(buffer));
       offset += buffer.byteLength;
+
+      const now = Date.now();
+      const samples = sentSamplesRef.current;
+      samples.push({ time: now, bytes: offset });
+      pruneOldSamples(samples, now);
+
+      if (offset >= file.size || now - lastSendUiUpdateRef.current > UI_UPDATE_THROTTLE_MS) {
+        lastSendUiUpdateRef.current = now;
+        setSendProgress(offset / file.size);
+        setSendSpeedBps(computeSpeedBps(samples));
+      }
     }
 
     // 3. Send EOF
     const eof = JSON.stringify({ type: 'EOF' });
     channels.forEach((dc) => dc.send(eof));
+    setSendSpeedBps(0);
   };
 
   return {
@@ -342,5 +418,10 @@ export function usePeerConnection() {
     joinRoom,
     broadcastFile,
     receivedBytes,
+    receiveFileMeta,
+    receiveSpeedBps,
+    sendFileMeta,
+    sendProgress,
+    sendSpeedBps,
   };
 }
