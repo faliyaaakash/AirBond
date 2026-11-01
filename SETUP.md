@@ -9,6 +9,15 @@ AirBond is an account-free, peer-to-peer platform with two features today:
   the signaling server over Socket.IO and are never stored anywhere. Only room metadata
   (name, private/password flag, creation time) is persisted, in MongoDB, and auto-expires
   2 hours after the room is created.
+- **Live Stream** — a broadcaster's camera or screen goes straight to viewers over WebRTC
+  (peer-to-peer, same as file sharing), with live speech-to-text captions (interim +
+  final, browser-native, never stored), a lightweight stream-chat sidebar, and single-heart
+  reactions. Streams can be public or password-protected and appear in a live "what's on
+  now" discovery list pushed to every connected browser. Entirely in-memory/ephemeral on
+  the server — no MongoDB, no Redis, just Socket.IO room state — and auto-expires 2 hours
+  after creation like everything else. Full group video calling (a real SFU) is a separate,
+  not-yet-built feature; this is one broadcaster to N viewers over a WebRTC mesh, which
+  scales to a handful of viewers, not a large audience.
 
 ## Project structure
 
@@ -18,11 +27,13 @@ AirBond/
 │   ├── signaling-server/   # NestJS + Socket.IO signaling server
 │   │   └── src/rooms/
 │   │       ├── files/       # WebRTC file-sharing signaling (Redis-backed)
-│   │       └── chat/        # Chat rooms + messaging (Mongo-backed room metadata)
+│   │       ├── chat/        # Chat rooms + messaging (Mongo-backed room metadata)
+│   │       └── stream/      # Live stream signaling, captions, stream chat (in-memory)
 │   └── web/                # React + Vite client
 │       └── src/
 │           ├── webrtc/       # File-sharing peer connection logic
-│           └── chat/         # Chat socket hook, UI, message formatting
+│           ├── chat/         # Chat socket hook, UI, message formatting
+│           └── stream/       # Live stream session hook, broadcaster/viewer UI
 ├── packages/
 │   └── shared/              # Shared TS types & constants (@airbond/shared)
 ├── infra/
@@ -53,6 +64,13 @@ creation, and the server independently force-closes the room and disconnects eve
 in it at that same moment. **Chat messages themselves are never written to MongoDB, or
 anywhere else** — they're relayed live over Socket.IO and only exist in the browser tabs
 that were open to see them.
+
+### What Live Stream uses
+
+Nothing extra — no Redis, no MongoDB. Stream rooms (title, private/password flag, viewer
+list, live captions, stream chat) live entirely in the signaling server's memory and are
+gone the moment the stream ends or the server restarts, same 2-hour ephemeral ceiling as
+everything else in this app.
 
 ## 1. Install dependencies
 
@@ -128,6 +146,11 @@ Open two browser tabs/windows at `http://localhost:5173` to test either feature:
   a stage name to join it; in the other tab, join the same room ID with a different
   stage name. You should see a join toast, typing indicators, and messages appear in
   both tabs live.
+- **Live Stream tab** (Chrome/Edge, for live captions): start a stream in one tab
+  (grant camera/mic access); it should appear in the "Live now" list in the other tab,
+  tagged Public or Private. Join it there — video should render within a couple of
+  seconds, and speaking in the broadcaster tab should show live captions in the viewer
+  tab. Try the mic/camera/screen-share toggles, stream chat, and reactions.
 
 ### Chat REST API
 
@@ -194,3 +217,44 @@ npm run test:cov     # coverage
   `npm run dev:server`.
 - **`npm install` conflicts inside `apps/web`** — the repo uses npm workspaces from the
   root; always run `npm install` from the repo root, not from inside `apps/web`.
+- **Testing camera/mic features (Live Stream, Video Call) from a phone on the same
+  Wi-Fi** — `getUserMedia` requires a secure context, so you need `apps/web`'s HTTPS dev
+  cert set up (see step 2) and the LAN IP it was generated for (`npm run dev:web` prints
+  it as `Network: https://<ip>:5173`). Visit that exact URL on the phone, not
+  `localhost`.
+  - **Camera/mic permission denied with no popup ever appearing** on Android Chrome —
+    this means Chrome already has a stored decision for the page, not a fresh prompt.
+    Check two separate places: (1) the lock/info icon next to Chrome's address bar →
+    Permissions → Camera/Microphone → Allow (or Chrome Settings → Site settings → All
+    sites → the page → same), and (2) Android Settings → Apps → Chrome → Permissions →
+    Camera/Microphone → Allow — if Chrome itself is blocked at the OS level, it won't
+    even show the in-page prompt. The app itself now surfaces these exact steps inline
+    when this error occurs (see `apps/web/src/components/PermissionDeniedHelp.tsx`).
+  - **Still failing after both of those are Allowed** — likely the self-signed dev cert
+    isn't trusted on the phone, which can make Chrome treat camera/mic as unavailable
+    even with permissions granted. Install the CA once: send `infra/certs/rootCA.pem` to
+    the phone, then Android Settings → Security → Encryption & credentials → Install a
+    certificate → CA certificate → pick the file. Reload the page afterward; the address
+    bar should show a trusted padlock instead of "Not secure".
+- **Demoing on a network you don't control** (college/office Wi-Fi, a classroom) instead
+  of your usual home network — several things are network-specific and need redoing:
+  - **`VITE_TURN_URL`/`VITE_STUN_URL` pointing at a LAN IP** (e.g. your home coturn at
+    `192.168.x.x:3478`) is unreachable from a different network entirely. `ICE_CONFIG`
+    (`apps/web/src/webrtc/iceConfig.ts`) always also includes a free public TURN fallback
+    (OpenRelay/Metered) for exactly this reason, so P2P/calls/streams still have a relay
+    option even when the LAN one can't be reached — no `.env` change needed for this part.
+  - **Cloudflare quick-tunnel URLs (`cloudflared tunnel --url ...`) are tied to the
+    `cloudflared` process, not the network.** If that process is still running when you
+    switch Wi-Fi, the same tunnel URL keeps working (it just reconnects). If your laptop
+    sleeps/restarts between networks, you'll get brand-new random URLs when you restart
+    `cloudflared` — update `VITE_SIGNALING_URL` in `apps/web/.env` to the new signaling
+    tunnel URL and restart `npm run dev:web` before presenting.
+  - **The biggest real risk is the network itself blocking peer-to-peer traffic** — many
+    institutional Wi-Fi networks enable "client/AP isolation," which silently drops
+    traffic directly between two devices on the same Wi-Fi at the access point itself.
+    No STUN/TURN configuration fixes this (it's not a NAT problem, it's the AP refusing
+    to forward the packets at all) — file transfers/calls/streams between two devices on
+    that Wi-Fi will simply never connect. Test on the actual destination network ahead of
+    time if at all possible. If it turns out to be isolated, the reliable fallback is
+    putting both demo devices on one phone's personal mobile hotspot instead of the
+    venue's Wi-Fi — that's a network you fully control and isolation won't be enabled.

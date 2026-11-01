@@ -27,7 +27,7 @@ import { JoinRoomDto } from './dto/join-room.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { RoomIdDto } from './dto/room-id.dto';
 import { ReactMessageDto } from './dto/react-message.dto';
-import { validateDto } from './validate-dto';
+import { validateDto } from '../../common/validate-dto';
 import { StatsService } from '../../stats/stats.service';
 
 const MESSAGE_MAX_LENGTH = 2000;

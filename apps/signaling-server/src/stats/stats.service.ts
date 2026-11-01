@@ -7,7 +7,12 @@ import {
   FileRoomStat,
   StatsEventLogEntry,
   StatsSnapshot,
+  StreamConnectionBreakdown,
+  StreamJoinCounts,
+  StreamJoinSource,
+  StreamRoomStat,
   TrafficPoint,
+  VideoSource,
 } from '@airbond/shared';
 import { RedisService } from '../common/redis/redis.service';
 
@@ -38,6 +43,27 @@ interface ChatRoomEntry {
   expiresAt: Date;
 }
 
+interface StreamRoomEntry {
+  roomId: string;
+  title: string;
+  isPrivate: boolean;
+  viewerCount: number;
+  micEnabled: boolean;
+  cameraEnabled: boolean;
+  videoSource: VideoSource;
+  captionCount: number;
+  chatMessageCount: number;
+  // What actually crossed the wire to this server for this stream (SDP/ICE/
+  // caption/chat/reaction relay) - the per-stream half of the proof metric,
+  // contrasted against firstSeenAt on the dashboard.
+  signalingBytes: number;
+  // Per-viewer socketId -> classification, aggregated into a direct/relay/
+  // unknown breakdown at snapshot time.
+  viewerConnections: Map<string, ConnectionType>;
+  joinCounts: StreamJoinCounts;
+  firstSeenAt: Date;
+}
+
 // Every value tracked here is aggregate/metadata: room IDs, peer counts, byte
 // counts, message counts, filenames+sizes. Never file content, never chat text.
 // The time-series lives in Redis with a 15-minute TTL per bucket - a rolling
@@ -48,6 +74,7 @@ export class StatsService {
 
   private readonly fileRooms = new Map<string, FileRoomEntry>();
   private readonly chatRooms = new Map<string, ChatRoomEntry>();
+  private readonly streamRooms = new Map<string, StreamRoomEntry>();
   // Newest-first ring buffer: literally what this server received, with its
   // real payload size, never the payload content.
   private readonly recentEvents: StatsEventLogEntry[] = [];
@@ -114,6 +141,9 @@ export class StatsService {
     fileName: string,
     fileSize: number,
     bytesTransferred: number,
+    queueIndex?: number,
+    queueTotal?: number,
+    userPaused?: boolean,
   ) {
     const room = this.fileRooms.get(roomId);
     if (!room) return;
@@ -129,6 +159,13 @@ export class StatsService {
       fileSize,
       bytesTransferred,
       lastBytesTransferred: bytesTransferred,
+      // A progress ping doesn't carry backpressure info - keep whatever this
+      // transfer last reported instead of wiping it out every ~150ms.
+      writeLagBytes: previous?.writeLagBytes,
+      backpressureEngaged: previous?.backpressureEngaged,
+      queueIndex: queueIndex ?? previous?.queueIndex,
+      queueTotal: queueTotal ?? previous?.queueTotal,
+      userPaused: userPaused ?? previous?.userPaused,
     });
 
     if (bytesTransferred >= fileSize) {
@@ -146,6 +183,30 @@ export class StatsService {
       await this.addToBucket(delta, 0);
       await this.redisService.client.incrby('stats:total:fileBytes', delta);
     }
+  }
+
+  // A receiver's OPFS disk write has fallen behind (or caught back up with)
+  // the incoming data rate. Purely a UI annotation on the existing transfer
+  // entry - never affects the byte-delta/traffic accounting above.
+  recordFileTransferBackpressure(
+    roomId: string,
+    socketId: string,
+    fileName: string,
+    writeLagBytes: number,
+    engaged: boolean,
+  ) {
+    const room = this.fileRooms.get(roomId);
+    if (!room) return;
+
+    const key = `${socketId}:receive`;
+    const existing = room.transfers.get(key);
+    if (!existing) return;
+
+    existing.writeLagBytes = writeLagBytes;
+    existing.backpressureEngaged = engaged;
+    // fileName is already known from the progress ping, but keep it aligned
+    // in case a backpressure ping ever outraces the first progress ping.
+    existing.fileName = fileName;
   }
 
   // --- Chat rooms ----------------------------------------------------------
@@ -199,27 +260,143 @@ export class StatsService {
     await this.redisService.client.incr('stats:total:chatMessages');
   }
 
+  // --- Live streams ----------------------------------------------------------
+
+  upsertStreamRoom(
+    roomId: string,
+    title: string,
+    isPrivate: boolean,
+    viewerCount: number,
+  ) {
+    const existing = this.streamRooms.get(roomId);
+    if (existing) {
+      existing.viewerCount = viewerCount;
+      return;
+    }
+    this.streamRooms.set(roomId, {
+      roomId,
+      title,
+      isPrivate,
+      viewerCount,
+      micEnabled: true,
+      cameraEnabled: true,
+      videoSource: 'camera',
+      captionCount: 0,
+      chatMessageCount: 0,
+      signalingBytes: 0,
+      viewerConnections: new Map(),
+      joinCounts: { discovery: 0, code: 0, link: 0 },
+      firstSeenAt: new Date(),
+    });
+  }
+
+  setStreamViewerCount(roomId: string, viewerCount: number) {
+    const room = this.streamRooms.get(roomId);
+    if (room) room.viewerCount = viewerCount;
+  }
+
+  setStreamTrackState(
+    roomId: string,
+    micEnabled: boolean,
+    cameraEnabled: boolean,
+    videoSource: VideoSource,
+  ) {
+    const room = this.streamRooms.get(roomId);
+    if (!room) return;
+    room.micEnabled = micEnabled;
+    room.cameraEnabled = cameraEnabled;
+    room.videoSource = videoSource;
+  }
+
+  setStreamViewerConnectionType(
+    roomId: string,
+    socketId: string,
+    connectionType: ConnectionType,
+  ) {
+    const room = this.streamRooms.get(roomId);
+    if (!room) return;
+    room.viewerConnections.set(socketId, connectionType);
+  }
+
+  // Tallies how a viewer arrived (discovery list, join-by-code, or a shared
+  // deep link) so the dashboard can show whether link-sharing actually
+  // drives joins. Only "link" gets a global counter, mirroring the other
+  // headline "total...Tracked" proof metrics.
+  async recordStreamJoin(roomId: string, source: StreamJoinSource) {
+    const room = this.streamRooms.get(roomId);
+    if (room) room.joinCounts[source] += 1;
+    if (source === 'link') {
+      await this.redisService.client.incr('stats:total:streamLinkJoins');
+    }
+  }
+
+  addStreamSignalingBytes(roomId: string, sizeBytes: number) {
+    const room = this.streamRooms.get(roomId);
+    if (room) room.signalingBytes += sizeBytes;
+  }
+
+  async recordStreamCaption(roomId: string) {
+    const room = this.streamRooms.get(roomId);
+    if (room) room.captionCount += 1;
+    await this.redisService.client.incr('stats:total:streamCaptions');
+  }
+
+  async recordStreamChatMessage(roomId: string) {
+    const room = this.streamRooms.get(roomId);
+    if (room) room.chatMessageCount += 1;
+    await this.redisService.client.incr('stats:total:streamChatMessages');
+  }
+
+  removeStreamRoom(roomId: string) {
+    this.streamRooms.delete(roomId);
+  }
+
   // --- Snapshot for the dashboard ------------------------------------------
 
   async getSnapshot(): Promise<StatsSnapshot> {
-    const [traffic, totalFileBytes, totalChatMessages, totalSignalingBytes] =
-      await Promise.all([
-        this.getTrafficSeries(),
-        this.redisService.client.get('stats:total:fileBytes'),
-        this.redisService.client.get('stats:total:chatMessages'),
-        this.redisService.client.get('stats:total:signalingBytes'),
-      ]);
+    const [
+      traffic,
+      totalFileBytes,
+      totalChatMessages,
+      totalSignalingBytes,
+      totalStreamCaptions,
+      totalStreamChatMessages,
+      totalStreamLinkJoins,
+    ] = await Promise.all([
+      this.getTrafficSeries(),
+      this.redisService.client.get('stats:total:fileBytes'),
+      this.redisService.client.get('stats:total:chatMessages'),
+      this.redisService.client.get('stats:total:signalingBytes'),
+      this.redisService.client.get('stats:total:streamCaptions'),
+      this.redisService.client.get('stats:total:streamChatMessages'),
+      this.redisService.client.get('stats:total:streamLinkJoins'),
+    ]);
 
     const fileRooms: FileRoomStat[] = [...this.fileRooms.values()].map(
       (room) => ({
         roomId: room.roomId,
         peerCount: room.peerCount,
         activeTransfers: [...room.transfers.values()].map(
-          ({ direction, fileName, fileSize, bytesTransferred }) => ({
+          ({
             direction,
             fileName,
             fileSize,
             bytesTransferred,
+            writeLagBytes,
+            backpressureEngaged,
+            queueIndex,
+            queueTotal,
+            userPaused,
+          }) => ({
+            direction,
+            fileName,
+            fileSize,
+            bytesTransferred,
+            writeLagBytes,
+            backpressureEngaged,
+            queueIndex,
+            queueTotal,
+            userPaused,
           }),
         ),
         firstSeenAt: room.firstSeenAt.toISOString(),
@@ -238,6 +415,24 @@ export class StatsService {
       }),
     );
 
+    const streamRooms: StreamRoomStat[] = [...this.streamRooms.values()].map(
+      (room) => ({
+        roomId: room.roomId,
+        title: room.title,
+        isPrivate: room.isPrivate,
+        viewerCount: room.viewerCount,
+        micEnabled: room.micEnabled,
+        cameraEnabled: room.cameraEnabled,
+        videoSource: room.videoSource,
+        captionCount: room.captionCount,
+        chatMessageCount: room.chatMessageCount,
+        signalingBytesTracked: room.signalingBytes,
+        connectionBreakdown: this.connectionBreakdown(room.viewerConnections),
+        joinCounts: { ...room.joinCounts },
+        firstSeenAt: room.firstSeenAt.toISOString(),
+      }),
+    );
+
     return {
       generatedAt: new Date().toISOString(),
       totals: {
@@ -251,12 +446,35 @@ export class StatsService {
         totalFileBytesTracked: Number(totalFileBytes ?? 0),
         totalChatMessagesTracked: Number(totalChatMessages ?? 0),
         totalSignalingBytesTracked: Number(totalSignalingBytes ?? 0),
+        activeStreamRooms: streamRooms.length,
+        connectedStreamViewers: streamRooms.reduce(
+          (sum, r) => sum + r.viewerCount,
+          0,
+        ),
+        totalCaptionsTracked: Number(totalStreamCaptions ?? 0),
+        totalStreamChatMessagesTracked: Number(totalStreamChatMessages ?? 0),
+        totalStreamLinkJoinsTracked: Number(totalStreamLinkJoins ?? 0),
       },
       fileRooms,
       chatRooms,
+      streamRooms,
       traffic,
       recentEvents: this.recentEvents,
     };
+  }
+
+  private connectionBreakdown(
+    connections: Map<string, ConnectionType>,
+  ): StreamConnectionBreakdown {
+    const breakdown: StreamConnectionBreakdown = {
+      direct: 0,
+      relay: 0,
+      unknown: 0,
+    };
+    for (const connectionType of connections.values()) {
+      breakdown[connectionType] += 1;
+    }
+    return breakdown;
   }
 
   private bucketKey(epochSeconds: number): string {

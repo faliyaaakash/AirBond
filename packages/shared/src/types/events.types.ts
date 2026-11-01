@@ -32,12 +32,31 @@ export interface RoomUsersPayload {
 // Never carries file content - just enough for the live stats dashboard to show
 // what's happening (filename, size, bytes so far) without the server ever
 // touching the actual bytes, which still travel peer-to-peer over WebRTC.
+// queueIndex/queueTotal/paused are sender-reported only (direction 'send') -
+// the receiver has no concept of a queue of its own and its pause state
+// mirrors the sender's 1:1, so reporting it once here is enough.
 export interface FileTransferProgressPayload {
   roomId: string;
   direction: 'send' | 'receive';
   fileName: string;
   fileSize: number;
   bytesTransferred: number;
+  queueIndex?: number;
+  queueTotal?: number;
+  paused?: boolean;
+}
+
+// Reported by a receiver whenever its OPFS disk write falls behind the
+// incoming data rate by enough to matter - lets the dashboard show that a
+// transfer's bottleneck moved from the network to local storage, not just
+// that it's "slow". `engaged` flips true once writeLagBytes crosses the high
+// watermark and false again once it drains back under the low watermark
+// (hysteresis - see usePeerConnection.ts).
+export interface FileTransferBackpressurePayload {
+  roomId: string;
+  fileName: string;
+  writeLagBytes: number;
+  engaged: boolean;
 }
 
 // Reported once a peer connection settles, classifying how it connected -

@@ -9,6 +9,7 @@ const WHY_ITS_DIFFERENT = [
   'Chat messages relay live through our signaling server so features like typing indicators and join notifications work properly — but they\'re never written to a database. Once you close the tab, they\'re gone.',
   'Chat rooms auto-expire 2 hours after creation, no exceptions.',
   'Private chat rooms are password-protected; the password is hashed and never stored in plain text.',
+  'Live streams go straight from the broadcaster\'s browser to viewers over WebRTC — this server only handles the initial handshake, live captions, and stream chat text, never the video itself.',
 ];
 
 export default function HomePage() {
@@ -29,6 +30,9 @@ export default function HomePage() {
             </LinkButton>
             <LinkButton to="/files" variant="secondary">
               Open File Share
+            </LinkButton>
+            <LinkButton to="/stream" variant="secondary">
+              Open Live Stream
             </LinkButton>
           </div>
         </div>
@@ -176,6 +180,32 @@ export default function HomePage() {
             Open Chat
           </LinkButton>
         </Card>
+
+        <Card style={{ flex: '1 1 320px', minWidth: 260, background: theme.color.panelAlt }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              background: theme.color.accentSoft,
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 18,
+              marginBottom: 12,
+            }}
+          >
+            🎥
+          </span>
+          <h3 style={{ fontSize: 19, marginBottom: 8 }}>Live Stream</h3>
+          <p style={{ color: theme.color.textSecondary, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>
+            Broadcast your camera or screen to viewers, public or password-protected, with live
+            speech-to-text captions and a lightweight stream chat.
+          </p>
+          <LinkButton to="/stream" variant="secondary" style={{ padding: '8px 18px', fontSize: 13 }}>
+            Open Live Stream
+          </LinkButton>
+        </Card>
       </div>
 
       <div
@@ -191,7 +221,7 @@ export default function HomePage() {
           color: theme.color.textSecondary,
         }}
       >
-        <span>Files transfer peer-to-peer. Chat messages relay live and are never stored.</span>
+        <span>Files and live streams transfer peer-to-peer. Chat messages relay live and are never stored.</span>
         <span>Rooms auto-expire · 2 hours</span>
       </div>
     </div>

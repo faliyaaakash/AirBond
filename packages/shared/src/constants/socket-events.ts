@@ -9,5 +9,6 @@ export const SOCKET_EVENTS = {
   LEAVE_ROOM: 'leave-room',
   ROOM_CLOSED: 'room-closed',
   FILE_TRANSFER_PROGRESS: 'file-transfer-progress',
+  FILE_TRANSFER_BACKPRESSURE: 'file-transfer-backpressure',
   CONNECTION_INFO: 'connection-info',
 } as const;
