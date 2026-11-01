@@ -6,6 +6,8 @@ import { AppService } from './app.service';
 import { RedisModule } from './common/redis/redis.module';
 import { FileGateway } from './rooms/files/files.gateway';
 import { ChatModule } from './rooms/chat/chat.module';
+import { StreamModule } from './rooms/stream/stream.module';
+import { CallModule } from './rooms/call/call.module';
 import { StatsModule } from './stats/stats.module';
 
 @Module({
@@ -23,6 +25,8 @@ import { StatsModule } from './stats/stats.module';
     }),
     StatsModule,
     ChatModule,
+    StreamModule,
+    CallModule,
   ],
   controllers: [AppController],
   providers: [AppService, FileGateway],

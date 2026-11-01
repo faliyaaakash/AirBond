@@ -11,6 +11,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import {
   ConnectionInfoPayload,
+  FileTransferBackpressurePayload,
   FileTransferProgressPayload,
   SOCKET_EVENTS,
 } from '@airbond/shared';
@@ -127,6 +128,35 @@ export class FileGateway
       data.fileName,
       data.fileSize,
       data.bytesTransferred,
+      data.queueIndex,
+      data.queueTotal,
+      data.paused,
+    );
+  }
+
+  // Lightweight metadata-only ping: a receiver's OPFS disk write is lagging
+  // (or has caught up with) the incoming data rate - just a filename and byte
+  // count for the dashboard, same as FILE_TRANSFER_PROGRESS above.
+  @SubscribeMessage(SOCKET_EVENTS.FILE_TRANSFER_BACKPRESSURE)
+  handleFileTransferBackpressure(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: FileTransferBackpressurePayload,
+  ) {
+    void this.logSignaling(
+      SOCKET_EVENTS.FILE_TRANSFER_BACKPRESSURE,
+      data,
+      data?.roomId,
+    );
+
+    const roomId = (data.roomId || '').trim();
+    if (!roomId || !data.fileName) return;
+
+    this.statsService.recordFileTransferBackpressure(
+      roomId,
+      client.id,
+      data.fileName,
+      data.writeLagBytes,
+      data.engaged,
     );
   }
 

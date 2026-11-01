@@ -15,14 +15,17 @@ services:
     volumes:
       - mongo_data:/data/db
 
-  # coturn:
-  #   image: coturn/coturn:latest
-  #   ports:
-  #     - '3478:3478/udp'
-  #     - '3478:3478/tcp'
-  #   volumes:
-  #     - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf
-  #   command: -c /etc/coturn/turnserver.conf
+  coturn:
+    image: coturn/coturn:latest
+    ports:
+      - '3478:3478/udp'
+      - '3478:3478/tcp'
+      - '49160-49200:49160-49200/udp'
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf
+    # external-ip must be the host machine's real LAN IP (not localhost/127.0.0.1)
+    # for relay candidates to be reachable from other devices - see infra/.env.example.
+    command: -c /etc/coturn/turnserver.conf --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1} --min-port=49160 --max-port=49200
 
 volumes:
   redis_data:

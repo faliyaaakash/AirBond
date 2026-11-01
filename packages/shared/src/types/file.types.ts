@@ -20,4 +20,10 @@ export type FileTransferSignal =
     { type: 'FILE_OFFER'; metadata: FileMetadata }
   | { type: 'FILE_ACCEPT'; fileId: string; startByteOffset: number }
   | { type: 'FILE_REJECT'; fileId: string; reason: string }
-  | { type: 'TRANSFER_COMPLETE'; fileId: string };
+  | { type: 'TRANSFER_COMPLETE'; fileId: string }
+  | { type: 'TRANSFER_PAUSED'; fileId: string }
+  | { type: 'TRANSFER_RESUMED'; fileId: string }
+  // Receiver -> sender: "my disk can't keep up, stop sending" / "caught up,
+  // go ahead". Independent of the user-initiated pause above - a sender
+  // combines both into a single effective pause (see usePeerConnection.ts).
+  | { type: 'WRITE_BACKPRESSURE'; fileId: string; engaged: boolean };

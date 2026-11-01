@@ -85,12 +85,21 @@ export default function DashboardPage() {
           <strong>File Share</strong> is peer-to-peer over WebRTC — file bytes never pass through this
           server. Clients only report a small metadata ping (filename, size, bytes-so-far) so this
           dashboard can show progress; the file content itself is never received or stored here.
+          A receiver also pings when its own local disk write falls behind the incoming data (shown
+          as <strong>Disk backpressure</strong> below) — the sender pauses automatically until it
+          catches up, so a slow phone/drive can't corrupt a transfer by losing chunks.
         </p>
-        <p style={{ fontSize: 13, color: theme.color.textSecondary, lineHeight: 1.6 }}>
+        <p style={{ fontSize: 13, color: theme.color.textSecondary, lineHeight: 1.6, marginBottom: 6 }}>
           <strong>Chat</strong> messages are relayed live through this server (so join/typing/reactions
           work), but are never written to a database — only a message <em>count</em> is tracked below,
           never message text. The traffic graph itself lives in Redis with a 15-minute rolling window,
           then auto-expires.
+        </p>
+        <p style={{ fontSize: 13, color: theme.color.textSecondary, lineHeight: 1.6 }}>
+          <strong>Live Stream</strong> video/audio goes straight from the broadcaster's browser to each
+          viewer over WebRTC — this server never receives it. The table below shows, per stream, how
+          many viewers actually connected direct P2P vs. needed a TURN relay, plus the real signaling
+          bytes this server processed (handshake, captions, chat) against how long the stream has run.
         </p>
       </Card>
 
@@ -151,6 +160,26 @@ export default function DashboardPage() {
         <Card style={statCardStyle}>
           <div style={{ fontSize: 11, color: theme.color.textSecondary }}>TOTAL MESSAGES RELAYED</div>
           <div style={{ fontSize: 22, fontWeight: 700 }}>{snapshot.totals.totalChatMessagesTracked}</div>
+        </Card>
+        <Card style={statCardStyle}>
+          <div style={{ fontSize: 11, color: theme.color.textSecondary }}>ACTIVE LIVE STREAMS</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{snapshot.totals.activeStreamRooms}</div>
+        </Card>
+        <Card style={statCardStyle}>
+          <div style={{ fontSize: 11, color: theme.color.textSecondary }}>STREAM VIEWERS CONNECTED</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{snapshot.totals.connectedStreamViewers}</div>
+        </Card>
+        <Card style={statCardStyle}>
+          <div style={{ fontSize: 11, color: theme.color.textSecondary }}>CAPTIONS RELAYED</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{snapshot.totals.totalCaptionsTracked}</div>
+        </Card>
+        <Card style={statCardStyle}>
+          <div style={{ fontSize: 11, color: theme.color.textSecondary }}>STREAM CHAT MESSAGES</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{snapshot.totals.totalStreamChatMessagesTracked}</div>
+        </Card>
+        <Card style={statCardStyle}>
+          <div style={{ fontSize: 11, color: theme.color.textSecondary }}>STREAM JOINS VIA SHARED LINK</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{snapshot.totals.totalStreamLinkJoinsTracked}</div>
         </Card>
       </div>
 
@@ -219,12 +248,16 @@ export default function DashboardPage() {
                 <th style={thStyle}>PEERS</th>
                 <th style={thStyle}>CONNECTION</th>
                 <th style={thStyle}>ACTIVE TRANSFERS</th>
+                <th style={thStyle}>DISK BACKPRESSURE</th>
                 <th style={thStyle}>AGE</th>
               </tr>
             </thead>
             <tbody>
               {snapshot.fileRooms.map((room) => {
                 const connLabel = connectionTypeLabel(room.connectionType);
+                const backpressured = room.activeTransfers.filter(
+                  (t) => t.direction === 'receive' && t.backpressureEngaged,
+                );
                 return (
                   <tr key={room.roomId}>
                     <td style={tdStyle}>
@@ -238,11 +271,29 @@ export default function DashboardPage() {
                       {room.activeTransfers.length === 0
                         ? '—'
                         : room.activeTransfers
-                            .map(
-                              (t) =>
-                                `${t.direction === 'send' ? '↑' : '↓'} ${t.fileName} (${formatBytes(t.bytesTransferred)} / ${formatBytes(t.fileSize)})`,
-                            )
+                            .map((t) => {
+                              const arrow = t.direction === 'send' ? '↑' : '↓';
+                              const queued =
+                                t.direction === 'send' && t.queueTotal && t.queueTotal > 1
+                                  ? ` (queued ${t.queueIndex}/${t.queueTotal})`
+                                  : '';
+                              const paused = t.direction === 'send' && t.userPaused ? ' ⏸ PAUSED' : '';
+                              return `${arrow} ${t.fileName}${queued}${paused} (${formatBytes(t.bytesTransferred)} / ${formatBytes(t.fileSize)})`;
+                            })
                             .join(', ')}
+                    </td>
+                    <td style={tdStyle}>
+                      {backpressured.length === 0 ? (
+                        room.activeTransfers.some((t) => typeof t.writeLagBytes === 'number') ? (
+                          <Badge tone="success">OK</Badge>
+                        ) : (
+                          '—'
+                        )
+                      ) : (
+                        <Badge tone="accent">
+                          ⏸ disk lag {formatBytes(Math.max(...backpressured.map((t) => t.writeLagBytes ?? 0)))}
+                        </Badge>
+                      )}
                     </td>
                     <td style={tdStyle}>{formatDuration(now - new Date(room.firstSeenAt).getTime())}</td>
                   </tr>
@@ -282,6 +333,56 @@ export default function DashboardPage() {
                   <td style={tdStyle}>{room.participantCount}</td>
                   <td style={tdStyle}>{room.messageCount}</td>
                   <td style={tdStyle}>{formatDuration(new Date(room.expiresAt).getTime() - now)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+
+      <h2 style={{ fontSize: 18, marginTop: 24, marginBottom: 8 }}>Active live streams</h2>
+      <Card padded={false}>
+        {snapshot.streamRooms.length === 0 ? (
+          <p style={{ padding: 16, fontSize: 13, color: theme.color.textSecondary }}>No active streams.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>ROOM ID</th>
+                <th style={thStyle}>TITLE</th>
+                <th style={thStyle}></th>
+                <th style={thStyle}>VIEWERS</th>
+                <th style={thStyle}>CONNECTIONS (DIRECT / RELAY / UNKNOWN)</th>
+                <th style={thStyle}>CAPTIONS</th>
+                <th style={thStyle}>CHAT MSGS</th>
+                <th style={thStyle}>JOINS (LINK / CODE / DISCOVERY)</th>
+                <th style={thStyle}>SIGNALING BYTES VS. DURATION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshot.streamRooms.map((room) => (
+                <tr key={room.roomId}>
+                  <td style={tdStyle}>
+                    <code>{room.roomId}</code>
+                  </td>
+                  <td style={tdStyle}>{room.title}</td>
+                  <td style={tdStyle}>
+                    {room.isPrivate ? <Badge tone="accent">PRIVATE</Badge> : <Badge tone="success">PUBLIC</Badge>}
+                  </td>
+                  <td style={tdStyle}>{room.viewerCount}</td>
+                  <td style={tdStyle}>
+                    {room.connectionBreakdown.direct} direct / {room.connectionBreakdown.relay} relay /{' '}
+                    {room.connectionBreakdown.unknown} unknown
+                  </td>
+                  <td style={tdStyle}>{room.captionCount}</td>
+                  <td style={tdStyle}>{room.chatMessageCount}</td>
+                  <td style={tdStyle}>
+                    {room.joinCounts.link} / {room.joinCounts.code} / {room.joinCounts.discovery}
+                  </td>
+                  <td style={tdStyle}>
+                    {formatBytes(room.signalingBytesTracked)} over{' '}
+                    {formatDuration(now - new Date(room.firstSeenAt).getTime())}
+                  </td>
                 </tr>
               ))}
             </tbody>
